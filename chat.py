@@ -5,11 +5,6 @@ import store
 
 config = store.load_config()
 model = Ollama(model=config.get("default_model", "deepseek-coder-v2"))
-<<<<<<< HEAD
-model = Ollama(model="llama3.2")
-=======
->>>>>>> f47effd (updated readme)
-
 template = """
 You are an expert in answering questions about a pizza restaurant
 q
@@ -37,9 +32,8 @@ def _build_bounded_context(docs, max_total_chars: int = 6000, max_doc_chars: int
 
 def askai(question):
     rag = retriever.invoke(question)
-<<<<<<< HEAD
     rag_text = "\n".join(f"[{doc.metadata['source']}]\n{doc.page_content}" for doc in rag)
-    result = chain.invoke({"reviews": rag_text, "question": question + "always end with source whenever possible"})
+    result = chain.invoke({"reviews": rag_text, "question": question})
     print(result, "\n\n")
 
 if __name__ == "__main__":
@@ -48,8 +42,3 @@ if __name__ == "__main__":
         if question.lower() == "exit":
             break
         askai(question)
-=======
-    rag_text = _build_bounded_context(rag)
-    result = chain.invoke({"reviews": rag_text, "question": question + "always end with source whenever possible"})
-    print(result,"\n \n")
->>>>>>> f47effd (updated readme)
