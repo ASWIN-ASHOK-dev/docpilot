@@ -1,42 +1,22 @@
-from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_ollama.llms import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate
+from vector import retriever
 
-EMBEDDINGS = OllamaEmbeddings(model="mxbai-embed-large:335m")
-DB_LOCATION = "./chroma_langchain_db"
-COLLECTION = "docpilot"
-
-vectorstore = Chroma(
-    collection_name=COLLECTION,
-    persist_directory=DB_LOCATION,
-    embedding_function=EMBEDDINGS
-)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-
-model = OllamaLLM(model="llama3.2")
+model = Ollama(model="deepseek-coder-v2")
 
 template = """
-You are a helpful assistant that answers questions using documentation.
-Use only the context below to answer. If you don't know, say so.
+You are an expert in answering questions about a pizza restaurant
 
-Context:
-{context}
-
-Question: {question}
+Here are some relevant reviews: {reviews}
+Here is the question to answer: {question}
 """
-
 prompt = ChatPromptTemplate.from_template(template)
-chain = prompt | model
 
+chain = prompt | model
 while True:
-    question = input("\nAsk a question (or type 'exit'): ")
-    if question.lower() == "exit":
-        break
-    docs = retriever.invoke(question)
-    context = "\n\n".join(f"[{doc.metadata['source']}]\n{doc.page_content}" for doc in docs)
-    print("\nSources used:")
-    for doc in docs:
-        print(f"  - {doc.metadata['source']}")
-    print("\nAnswer:")
-    result = chain.invoke({"context": context, "question": question})
-    print(result)
+    question = input("Enter a question about the restaurant: ")
+    reviews = retriever.invoke(question)
+    print("Retrieved reviews:",reviews)
+    reviews_text = "\n".join(f"[ID: {doc.id}] {doc.page_content}" for doc in reviews)
+    result = chain.invoke({"reviews": reviews_text, "question": question})
+    print(result,"\n \n")
