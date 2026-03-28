@@ -4,7 +4,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 
-EXTENSIONS = {".md"}
+EXTENSIONS = {".md", ".py"}
 DB_LOCATION = "./chroma_langchain_db"
 COLLECTION  = "docpilot"
 EMBEDDINGS  = OllamaEmbeddings(model="mxbai-embed-large:335m")
