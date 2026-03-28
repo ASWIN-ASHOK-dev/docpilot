@@ -2,6 +2,8 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import deque
 
 
 def _print_progress(label: str, current: int, total: int, width: int = 28) -> None:
@@ -13,23 +15,43 @@ def _print_progress(label: str, current: int, total: int, width: int = 28) -> No
     end = "\n" if current >= total else "\r"
     print(f"{label}: [{bar}] {current}/{total}", end=end, flush=True)
 
-def get_robot_parser(base_url: str) -> RobotFileParser:
-    parsed = urlparse(base_url)
-    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-    rp = RobotFileParser()
-    rp.set_url(robots_url)
-    rp.read()
-    return rp
 
-def scrape_url(url: str) -> str:
-    res = httpx.get(url, follow_redirects=True, timeout=30.0)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "html.parser")
+def _extract_text(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["nav", "footer", "script", "style"]):
         tag.decompose()
     return soup.get_text(separator="\n", strip=True)
 
-def _collect_sitemap_urls(sitemap_url: str, seen: set[str] | None = None) -> list[str]:
+
+def _normalize_url(url: str) -> str:
+    parsed = urlparse(url)
+    cleaned = parsed._replace(fragment="")
+    normalized = cleaned.geturl()
+    if normalized.endswith("/") and len(normalized) > len(f"{cleaned.scheme}://{cleaned.netloc}/"):
+        normalized = normalized.rstrip("/")
+    return normalized
+
+
+def scrape_url(url: str, client: httpx.Client | None = None) -> str:
+    if client is None:
+        res = httpx.get(url, follow_redirects=True, timeout=30.0)
+    else:
+        res = client.get(url, follow_redirects=True, timeout=30.0)
+    res.raise_for_status()
+    return _extract_text(res.text)
+
+
+def _fetch_html(url: str, client: httpx.Client) -> tuple[str, str]:
+    res = client.get(url, follow_redirects=True, timeout=20.0)
+    res.raise_for_status()
+    return url, res.text
+
+
+def _collect_sitemap_urls(
+    sitemap_url: str,
+    seen: set[str] | None = None,
+    client: httpx.Client | None = None,
+) -> list[str]:
     if seen is None:
         seen = set()
     if sitemap_url in seen:
@@ -37,7 +59,10 @@ def _collect_sitemap_urls(sitemap_url: str, seen: set[str] | None = None) -> lis
     seen.add(sitemap_url)
 
     try:
-        res = httpx.get(sitemap_url, follow_redirects=True, timeout=30.0)
+        if client is None:
+            res = httpx.get(sitemap_url, follow_redirects=True, timeout=30.0)
+        else:
+            res = client.get(sitemap_url, follow_redirects=True, timeout=30.0)
         res.raise_for_status()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -62,52 +87,82 @@ def _collect_sitemap_urls(sitemap_url: str, seen: set[str] | None = None) -> lis
         if not target:
             continue
         if target.endswith(".xml") or target.endswith(".xml.gz"):
-            urls.extend(_collect_sitemap_urls(target, seen))
+            urls.extend(_collect_sitemap_urls(target, seen, client=client))
         else:
             urls.append(target)
     return urls
 
 
-def scrape_sitemap(sitemap_url: str) -> list[str]:
-    urls = _collect_sitemap_urls(sitemap_url)
+def scrape_sitemap(sitemap_url: str, max_workers: int = 16) -> list[str]:
+    limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
+    with httpx.Client(limits=limits) as client:
+        urls = _collect_sitemap_urls(sitemap_url, client=client)
     texts: list[str] = []
     total = len(urls)
-    for idx, u in enumerate(urls, start=1):
-        try:
-            texts.append(scrape_url(u))
-        except Exception:
-            pass
-        _print_progress("Scraping sitemap pages", idx, total)
+    if total == 0:
+        return texts
+
+    workers = max(1, min(max_workers, total))
+    with httpx.Client(limits=limits) as client:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(scrape_url, u, client) for u in urls]
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                try:
+                    texts.append(future.result())
+                except Exception:
+                    pass
+                _print_progress("Scraping sitemap pages", completed, total)
     return texts
 
-def scrape_site(base_url: str, max_pages: int = 50) -> list[str]:
-    rp = get_robot_parser(base_url)
-    visited = set()
-    to_visit = [base_url]
+def scrape_site(base_url: str, max_pages: int = 100, max_workers: int = 16) -> list[str]:
+    base_url = _normalize_url(base_url)
+    base_netloc = urlparse(base_url).netloc
+
+    visited: set[str] = set()
+    queued: set[str] = {base_url}
+    to_visit: deque[str] = deque([base_url])
     texts = []
-    while to_visit and len(visited) < max_pages:
-        url = to_visit.pop(0)
-        if url in visited:
-            continue
-        if not rp.can_fetch("*", url):
-            print(f"Blocked by robots.txt: {url}")
-            continue
-        visited.add(url)
-        _print_progress("Crawling pages", len(visited), max_pages)
-        try:
-            text = scrape_url(url)
-            texts.append(text)
-            res = httpx.get(url, follow_redirects=True)
-            soup = BeautifulSoup(res.text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                full = urljoin(base_url, a["href"])
-                if full.startswith(base_url) and full not in visited:
-                    to_visit.append(full)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                print(f"  Page not found (404): {url}")
-            else:
-                print(f"  HTTP error {e.response.status_code}: {url}")
-        except Exception as e:
-            print(f"  Error scraping {url}: {type(e).__name__}")
+    limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
+    max_workers = max(1, max_workers)
+    with httpx.Client(limits=limits) as client:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            while to_visit and len(visited) < max_pages:
+                batch: list[str] = []
+                while to_visit and len(batch) < max_workers and (len(visited) + len(batch)) < max_pages:
+                    candidate = to_visit.popleft()
+                    if candidate in visited:
+                        continue
+                    batch.append(candidate)
+
+                futures = {executor.submit(_fetch_html, url, client): url for url in batch}
+                for future in as_completed(futures):
+                    url = futures[future]
+                    visited.add(url)
+                    _print_progress("Crawling pages", len(visited), max_pages)
+                    try:
+                        _, html = future.result()
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 404:
+                            print(f"  Page not found (404): {url}")
+                        else:
+                            print(f"  HTTP error {e.response.status_code}: {url}")
+                        continue
+                    except Exception as e:
+                        print(f"  Error scraping {url}: {type(e).__name__}")
+                        continue
+
+                    texts.append(_extract_text(html))
+
+                    soup = BeautifulSoup(html, "html.parser")
+                    for a in soup.find_all("a", href=True):
+                        full = _normalize_url(urljoin(url, a["href"]))
+                        parsed = urlparse(full)
+                        if parsed.netloc != base_netloc:
+                            continue
+                        if full in visited or full in queued:
+                            continue
+                        queued.add(full)
+                        to_visit.append(full)
     return texts
