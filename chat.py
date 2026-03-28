@@ -19,5 +19,5 @@ chain = prompt | model
 def askai(question):
     rag = retriever.invoke(question)
     rag_text = "\n".join(f"[ID: {doc.id}] {doc.page_content}" for doc in rag)
-    result = chain.invoke({"reviews": rag_text, "question": question + "always end with source"})
+    result = chain.invoke({"reviews": rag_text, "question": question + "always end with source whenever possible"})
     print(result,"\n \n")
