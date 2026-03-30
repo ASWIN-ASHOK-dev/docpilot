@@ -1,7 +1,6 @@
 import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import deque
 
@@ -18,6 +17,10 @@ def _print_progress(label: str, current: int, total: int, width: int = 28) -> No
 
 def _extract_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
+    return _extract_text_from_soup(soup)
+
+
+def _extract_text_from_soup(soup: BeautifulSoup) -> str:
     for tag in soup(["nav", "footer", "script", "style"]):
         tag.decompose()
     return soup.get_text(separator="\n", strip=True)
@@ -153,9 +156,8 @@ def scrape_site(base_url: str, max_pages: int = 100, max_workers: int = 16) -> l
                         print(f"  Error scraping {url}: {type(e).__name__}")
                         continue
 
-                    texts.append(_extract_text(html))
-
                     soup = BeautifulSoup(html, "html.parser")
+                    texts.append(_extract_text_from_soup(soup))
                     for a in soup.find_all("a", href=True):
                         full = _normalize_url(urljoin(url, a["href"]))
                         parsed = urlparse(full)

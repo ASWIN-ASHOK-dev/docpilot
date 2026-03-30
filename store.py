@@ -6,10 +6,21 @@ import ollama
 path =  Path.home() / ".docpilot"
 CONFIG_PATH = path / "config.toml"
 
+
+def _get_available_models():
+    try:
+        models = ollama.list().models
+        return [m.model for m in models]
+    except Exception:
+        return []
+
+
+_AVAILABLE_MODELS = _get_available_models()
+
 # Default configuration
 DEFAULT_CONFIG = {
-    "default_embed_model": (ollama.list().models)[0].model if ollama.list().models else "mxbai-embed-large:335m",
-    "default_model": (ollama.list().models)[1].model if ollama.list().models else "llama2",
+    "default_embed_model": _AVAILABLE_MODELS[0] if _AVAILABLE_MODELS else "mxbai-embed-large:335m",
+    "default_model": _AVAILABLE_MODELS[1] if len(_AVAILABLE_MODELS) > 1 else "llama2",
     "db_path": str(path / "chroma_langchain_db"),
     "log_level": "info",
 }

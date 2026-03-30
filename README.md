@@ -2,25 +2,49 @@
 
 Ask your docs anything from your terminal using a local RAG pipeline.
 
-`docpilot` scrapes documentation pages, chunks text, embeds it with Ollama embeddings, stores vectors in ChromaDB, and answers questions with a local LLM.
+## What it does
 
-## Features
+You point docpilot at a documentation website. It scrapes the pages, breaks the text into chunks, converts each chunk into a vector embedding using Ollama, and stores everything in ChromaDB. When you ask a question, it finds the most semantically relevant chunks and feeds them to a local LLM to generate an answer.
 
-- Local-first CLI workflow (no cloud dependency required)
-- Website and sitemap ingestion
-- Concurrent crawler with worker controls
-- Automatic config initialization at first run
-- Configurable default chat and embedding models
-- Chroma-backed retrieval and question answering
-- Embedding fallback logic for context-length overflow (auto split and retry)
+No cloud. No API keys. Runs entirely on your machine.
+
+## How it works (step by step)
+
+```
+Docs URL → Scraper → Chunker → Ollama Embeddings → ChromaDB
+                                                         ↓
+Your Question → Embed Question → Retrieve Top-K Chunks → LLM → Answer
+```
+
+1. **Scrape** — crawls the site concurrently, respects `--max-pages`
+2. **Chunk** — splits text into smaller pieces so embeddings stay focused
+3. **Embed** — converts each chunk to a vector using an Ollama embedding model
+4. **Store** — saves vectors + original text in ChromaDB at `~/.docpilot/chroma`
+5. **Retrieve** — at query time, embeds your question and finds the closest chunks
+6. **Answer** — sends retrieved chunks as context to a local LLM
+
+## Why these design choices
+
+**Why local-first?**
+No external API dependency, no cost per query, and your docs stay on your machine.
+
+**Why vector search instead of keyword search?**
+Semantic search finds relevant chunks even when the exact words don't match. "How do I make a venv" still finds chunks about `python -m venv`.
+
+**Why chunking?**
+LLMs have context limits. Chunking keeps each piece small enough to embed accurately and fit into the prompt without overflow.
+
+**Why ChromaDB?**
+Handles both vector storage and similarity search in one local library. No separate database server needed.
+
+**Why Ollama?**
+Runs models locally. Both the embedding model and the chat model run on your machine via Ollama.
 
 ## Requirements
 
 - Python 3.12+
 - [Ollama](https://ollama.com/) installed and running
-- At least one chat model and one embedding model available in Ollama
-
-Example model setup:
+- A chat model and an embedding model pulled in Ollama
 
 ```bash
 ollama pull qwen2.5:latest
@@ -29,184 +53,68 @@ ollama pull mxbai-embed-large:335m
 
 ## Installation
 
-### Option 1: Install as a CLI tool with uv (recommended)
-
-From this repository root:
-
 ```bash
+# Recommended — installs as a global CLI tool
 uv tool install .
+
+# Development — editable install, picks up code changes with uv run
+pip install -e .
 ```
 
-Then verify:
+## First run
 
-```bash
-docpilot --help
+On first run, docpilot creates `~/.docpilot/config.toml` with defaults:
+
+```toml
+default_model = "qwen2.5:latest"
+default_embed_model = "mxbai-embed-large:335m"
+db_path = "~/.docpilot/chroma"
 ```
 
-### Option 2: Editable install for development
+You can change these via CLI without editing the file directly.
+
+## Usage
 
 ```bash
-python -m pip install -e .
-```
-
-## First Run Behavior
-
-At startup, `docpilot` creates a config file if missing:
-
-- Config file: `~/.docpilot/config.toml`
-
-It stores defaults like:
-
-- `default_model`
-- `default_embed_model`
-- `db_path`
-
-You can change models via CLI (see below).
-
-## Quickstart
-
-1. List available Ollama models:
-
-```bash
+# See available Ollama models
 docpilot model list
-```
 
-2. Set default chat model:
-
-```bash
+# Set which model to use for chat and embeddings
 docpilot model set qwen2.5:latest
-```
-
-3. Set default embedding model:
-
-```bash
 docpilot model setembed mxbai-embed-large:335m
-```
 
-4. Ingest documentation:
+# Ingest a docs site
+docpilot ingest "https://docs.python.org/3/" --workers 24 --max-pages 100 --batch-size 64
 
-```bash
-docpilot ingest "https://docs.python.org/3/" --workers 24 --max-pages 100
-```
-
-5. Ask questions:
-
-```bash
+# Ask a question
 docpilot ask "How do I create a virtual environment in Python?"
 ```
 
-## Architecture
+## Trade-offs worth knowing
 
-`docpilot` follows a standard Retrieval-Augmented Generation (RAG) pipeline:
+**Chunking size**
+Smaller chunks = better retrieval precision but may lose surrounding context. Larger chunks = more context but embeddings get noisy.
 
-1. Scrape docs from a website or sitemap.
-2. Clean and chunk content into smaller text units.
-3. Create embeddings with Ollama embedding model (for example, `mxbai-embed-large:335m`).
-4. Store vectors + metadata in ChromaDB.
-5. Retrieve top-k relevant chunks for a user query.
-6. Send retrieved context to a local LLM and generate the final answer.
+**Top-K retrieval**
+Higher K means more chunks sent to the LLM = better recall but larger prompt and slower response. Lower K is faster but may miss relevant info.
 
-```mermaid
-flowchart LR
-		A[Docs URL or Sitemap] --> B[Scraper]
-		B --> C[Text Chunking]
-		C --> D[Embedding Model in Ollama]
-		D --> E[(ChromaDB Vector Store)]
-		F[User Question] --> G[Retriever Top-K]
-		E --> G
-		G --> H[LLM Prompt Builder]
-		H --> I[Local LLM Answer]
-```
+**Concurrency (`--workers`)**
+More workers = faster scraping but higher load on the target server and your machine. Default 16 is a reasonable middle ground.
 
-## Interview Notes
-
-Use this short version in interviews:
-
-- "DocPilot is a local-first RAG CLI for documentation Q and A."
-- "It ingests docs by scraping pages, chunking text, embedding with Ollama, and storing vectors in ChromaDB."
-- "At query time it retrieves semantically relevant chunks and feeds them to a local LLM for grounded answers."
-- "I added concurrency controls for faster ingestion and robust overflow handling by auto-splitting oversized embedding inputs."
-
-If asked about design decisions:
-
-- Why local-first:
-	Better privacy, no external API dependency, and predictable cost.
-- Why vector search:
-	Semantic retrieval works better than keyword-only search across large docs.
-- Why chunking:
-	Keeps context focused and improves retrieval quality.
-- Why overflow handling:
-	Prevents ingest failure when model context limits are exceeded.
-
-If asked about trade-offs:
-
-- Higher `k` improves recall but can increase prompt size and latency.
-- Aggressive chunking improves fit but may lose long-range context.
-- More workers increase throughput but can stress network/host resources.
-
-## CLI Commands
-
-### `docpilot ingest SOURCE`
-
-Ingest web docs from a site URL or a sitemap.
-
-Options:
-
-- `--max-pages`, `-p` (default: `20`): max pages to crawl for website mode
-- `--workers`, `-w` (default: `16`): concurrent scraping workers
-
-Examples:
-
-```bash
-docpilot ingest "https://docs.python.org/3/" --workers 24 --max-pages 50
-docpilot ingest "https://example.com/sitemap.xml" --workers 24
-```
-
-### `docpilot ask QUESTION`
-
-Query the ingested knowledge base.
-
-```bash
-docpilot ask "What is asyncio.gather used for?"
-```
-
-### `docpilot model ACTION [MODEL_NAME]`
-
-Model management:
-
-- `list`: list models from Ollama
-- `set <model>`: set default chat model
-- `setembed <model>`: set default embedding model
-
-Examples:
-
-```bash
-docpilot model list
-docpilot model set qwen2.5:latest
-docpilot model setembed mxbai-embed-large:335m
-```
-
-## Notes on Performance and Stability
-
-- Scraping is concurrent and tunable via `--workers`.
-- If an embedding request exceeds model context length, ingestion now retries by splitting chunks automatically.
-- Chat retrieval context is bounded before prompt construction to reduce prompt-overflow failures.
+**Embedding overflow**
+If a chunk is too long for the embedding model's context window, docpilot automatically splits it and retries rather than failing the whole ingest.
 
 ## Troubleshooting
 
-- `No such option: --workers`
-	- Reinstall the current local package:
-
+**`No such option: --workers`** — package is stale, reinstall:
 ```bash
-uv tool install .
+uv tool install . --force
 ```
 
-- Ollama model not found
-	- Run `docpilot model list` and set an available model.
+**Ollama model not found** — run `docpilot model list` and set an available model.
 
-- Empty answers after ingest
-	- Ensure ingest completed successfully and vectors were written to the configured `db_path`.
+**Empty answers after ingest** — ingest may have failed silently. Re-run ingest and check for errors.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT

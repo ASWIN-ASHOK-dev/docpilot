@@ -2,6 +2,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 import hashlib
+from collections import deque
 import store
 
 
@@ -42,9 +43,9 @@ def _safe_add_documents(batch_docs: list[Document], batch_ids: list[str]) -> tup
     inserted = 0
     skipped = 0
     for doc, doc_id in zip(batch_docs, batch_ids):
-        queue: list[tuple[str, str]] = [(doc.page_content, doc_id)]
+        queue: deque[tuple[str, str]] = deque([(doc.page_content, doc_id)])
         while queue:
-            text, current_id = queue.pop(0)
+            text, current_id = queue.popleft()
             try:
                 vectorstore.add_documents(
                     documents=[Document(page_content=text, metadata=doc.metadata, id=current_id)],

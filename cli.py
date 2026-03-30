@@ -1,10 +1,8 @@
 import ollama
 import typer
-from typer import models
 from chat import askai
-from scrape import scrape_url, scrape_sitemap, scrape_site
+from scrape import scrape_sitemap, scrape_site
 from embed import embed_texts
-import ollama
 import store
 
 # Initialize config at startup
@@ -18,6 +16,7 @@ def ingest(
     source: str,
     max_pages: int = typer.Option(20, "--max-pages", "-p", help="Max pages to crawl for websites."),
     workers: int = typer.Option(16, "--workers", "-w", help="Concurrent workers for scraping."),
+    batch_size: int = typer.Option(32, "--batch-size", "-b", min=1, help="Embedding batch size for faster ingest."),
 ):
     if source.endswith("sitemap.xml"):
         texts = scrape_sitemap(source, max_workers=workers)
@@ -26,7 +25,7 @@ def ingest(
     else:
         print("Unsupported source")
         return
-    embed_texts(texts, source=source)
+    embed_texts(texts, source=source, batch_size=batch_size)
     print("Ingestion complete.")
 
 @app.command()
