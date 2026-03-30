@@ -155,6 +155,21 @@ Common keys include:
 
 ## Troubleshooting
 
+### HTTP 429 while crawling (rate limited)
+
+- Use fewer workers for strict sites: `--workers 6` to `--workers 12`
+- Keep `--max-pages` realistic for the target site
+- Retry after a short cool-down if the site is actively throttling
+- docpilot now retries with backoff and respects `Retry-After` when provided
+
+Example:
+
+```bash
+docpilot ingest "https://example.com/docs" --max-pages 100 --workers 8
+```
+
+Note: the correct flag is `--max-pages` (not `--maxpages`).
+
 ### Command changes not showing
 
 Reinstall in editable mode during development:
