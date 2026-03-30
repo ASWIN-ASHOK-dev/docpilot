@@ -2,7 +2,9 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 import hashlib
+import os
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import store
 
 
@@ -114,13 +116,33 @@ def chunk_text(
         i += step
     return chunks
 
-def embed_texts(texts: list[str], source: str = "web", batch_size: int = 32):
+
+def _resolve_embed_workers(embed_workers: int, text_count: int) -> int:
+    if text_count <= 1:
+        return 1
+    if embed_workers > 0:
+        return min(embed_workers, text_count)
+
+    cpu_count = os.cpu_count() or 4
+    auto_workers = max(2, cpu_count // 2)
+    auto_workers = min(8, auto_workers)
+    return min(auto_workers, text_count)
+
+def embed_texts(texts: list[str], source: str = "web", batch_size: int = 32, embed_workers: int = 0):
     documents = []
     ids = []
     chunk_counter = 0
     seen_chunks = set()  # Track chunk content to avoid duplicates
-    for text in texts:
-        for chunk in chunk_text(text):
+
+    workers = _resolve_embed_workers(embed_workers, len(texts))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            chunked_texts = list(executor.map(chunk_text, texts))
+    else:
+        chunked_texts = [chunk_text(text) for text in texts]
+
+    for chunks in chunked_texts:
+        for chunk in chunks:
             # Skip duplicate chunks
             if chunk in seen_chunks:
                 continue

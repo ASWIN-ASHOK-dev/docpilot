@@ -17,6 +17,7 @@ def ingest(
     max_pages: int = typer.Option(20, "--max-pages", "-p", help="Max pages to crawl for websites."),
     workers: int = typer.Option(16, "--workers", "-w", help="Concurrent workers for scraping."),
     batch_size: int = typer.Option(32, "--batch-size", "-b", min=1, help="Embedding batch size for faster ingest."),
+    embed_workers: int = typer.Option(0, "--embed-workers", "-e", min=0, help="Threads for chunking before embedding (0 = auto)."),
 ):
     if source.endswith("sitemap.xml"):
         texts = scrape_sitemap(source, max_workers=workers)
@@ -25,7 +26,7 @@ def ingest(
     else:
         print("Unsupported source")
         return
-    embed_texts(texts, source=source, batch_size=batch_size)
+    embed_texts(texts, source=source, batch_size=batch_size, embed_workers=embed_workers)
     print("Ingestion complete.")
 
 @app.command()
